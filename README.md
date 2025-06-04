@@ -1,2 +1,2 @@
-# Dex
-a decentralize exchange for local currency
+# AmigoXchangeNew
+A Decentralized Crypto-to-fiat Trading Platform.
