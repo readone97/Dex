@@ -233,113 +233,219 @@ export default function DashboardPage() {
     }
   }, [connected, publicKey, router]);
 
-  const saveBankAccountToDb = async (data: {
-    bankName: string;
-    accountNumber: string;
-    accountName: string;
-  }) => {
-    if (!publicKey) return { error: "No wallet connected" };
 
-    const walletAddress = publicKey.toString();
+const saveBankAccountToDbAlternative = async (data: {
+  bankName: string;
+  accountNumber: string;
+  accountName: string;
+}) => {
+  if (!publicKey) {
+    return { error: "No wallet connected" };
+  }
 
-    try {
-      // First, try to update existing record
-      const { data: updateData, error: updateError } = await supabase
-        .from("profiles")
-        .update({
-          bank_name: data.bankName,
-          account_number: data.accountNumber,
-          account_name: data.accountName,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", walletAddress)
-        .select();
+  const walletAddress = publicKey.toString();
 
-      // If no rows were updated, create a new record
-      if (!updateError && updateData && updateData.length === 0) {
-        const { error: insertError } = await supabase.from("profiles").insert({
-          id: walletAddress,
-          bank_name: data.bankName,
-          account_number: data.accountNumber,
-          account_name: data.accountName,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        });
+  try {
+    // Try to insert first (for new users)
+    const { data: insertData, error: insertError } = await supabase
+      .from("profiles")
+      .insert({
+        wallet_address: walletAddress,
+        bank_name: data.bankName,
+        account_number: data.accountNumber,
+        account_name: data.accountName,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .select();
 
-        return { error: insertError };
-      }
-
-      return { error: updateError };
-    } catch (error) {
-      console.error("Database operation failed:", error);
-      return { error: error };
-    }
-  };
-
-  // Remove bank details from Supabase
-  const removeBankAccountFromDb = async () => {
-    if (!publicKey) return { error: "No wallet connected" };
-
-    try {
-      const { error } = await supabase
-        .from("profiles")
-        .update({
-          bank_name: null,
-          account_number: null,
-          account_name: null,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", publicKey.toString());
-
-      return { error };
-    } catch (error) {
-      console.error("Failed to remove bank details:", error);
-      return { error };
-    }
-  };
-
-  // 2. Update the fetch bank details function:
-
-  // Fetch bank details from Supabase on load
-  useEffect(() => {
-    const fetchBankAccount = async () => {
-      if (!publicKey) return;
-
-      try {
-        const { data, error } = await supabase
+    if (insertError) {
+      // If insert fails due to duplicate wallet_address, try update
+      if (insertError.code === '23505' || insertError.message.includes('duplicate')) {
+        const { data: updateData, error: updateError } = await supabase
           .from("profiles")
-          .select("bank_name, account_number, account_name")
-          .eq("id", publicKey.toString())
-          .single();
+          .update({
+            bank_name: data.bankName,
+            account_number: data.accountNumber,
+            account_name: data.accountName,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("wallet_address", walletAddress)
+          .select();
 
-        if (error) {
-          // If no record exists, that's okay - just set empty values
-          if (error.code === "PGRST116") {
-            setBankAccount({
-              bankName: "",
-              accountNumber: "",
-              accountName: "",
-            });
-          } else {
-            console.error("Error fetching bank details:", error);
-          }
-          return;
+        if (updateError) {
+          console.error("Update error:", updateError);
+          return { error: `Failed to update bank details: ${updateError.message}` };
         }
 
-        if (data) {
-          setBankAccount({
-            bankName: data.bank_name || "",
-            accountNumber: data.account_number || "",
-            accountName: data.account_name || "",
-          });
-        }
-      } catch (error) {
-        console.error("Failed to fetch bank account:", error);
+        return { error: null, data: updateData };
+      } else {
+        console.error("Insert error:", insertError);
+        return { error: `Failed to save bank details: ${insertError.message}` };
       }
-    };
+    }
 
-    fetchBankAccount();
-  }, [publicKey]);
+    return { error: null, data: insertData };
+  } catch (error) {
+    console.error("Database operation failed:", error);
+    return { error: `Database operation failed: ${error instanceof Error ? error.message : 'Unknown error'}` };
+  }
+};
+
+// Fixed removeBankAccountFromDb function
+const removeBankAccountFromDb = async () => {
+  if (!publicKey) {
+    return { error: "No wallet connected" };
+  }
+
+  try {
+    const { error } = await supabase
+      .from("profiles")
+      .update({
+        bank_name: null,
+        account_number: null,
+        account_name: null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("wallet_address", publicKey.toString());
+
+    if (error) {
+      console.error("Remove error:", error);
+      return { error: `Failed to remove bank details: ${error.message}` };
+    }
+
+    return { error: null };
+  } catch (error) {
+    console.error("Failed to remove bank details:", error);
+    return { error: `Failed to remove bank details: ${error instanceof Error ? error.message : 'Unknown error'}` };
+  }
+};
+
+// Fixed fetchBankAccount function - This should not cause errors for new users
+useEffect(() => {
+  const fetchBankAccount = async () => {
+    if (!publicKey) {
+      setBankAccount({
+        bankName: "",
+        accountNumber: "",
+        accountName: "",
+      });
+      return;
+    }
+
+    try {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("bank_name, account_number, account_name")
+        .eq("wallet_address", publicKey.toString())
+        .maybeSingle(); // Use maybeSingle() instead of single() to avoid errors when no record exists
+
+      // maybeSingle() returns null when no record exists, without throwing an error
+      if (error) {
+        console.error("Error fetching bank details:", error);
+        setBankAccount({
+          bankName: "",
+          accountNumber: "",
+          accountName: "",
+        });
+        return;
+      }
+
+      if (data) {
+        setBankAccount({
+          bankName: data.bank_name || "",
+          accountNumber: data.account_number || "",
+          accountName: data.account_name || "",
+        });
+      } else {
+        // No record exists - set empty values
+        setBankAccount({
+          bankName: "",
+          accountNumber: "",
+          accountName: "",
+        });
+      }
+    } catch (error) {
+      console.error("Failed to fetch bank account:", error);
+      setBankAccount({
+        bankName: "",
+        accountNumber: "",
+        accountName: "",
+      });
+    }
+  };
+
+  fetchBankAccount();
+}, [publicKey]);
+
+// Fixed UI handlers with better error handling
+const handleSaveBankAccount = async (data: {
+  bankName: string;
+  accountNumber: string;
+  accountName: string;
+}) => {
+  try {
+    const result = await saveBankAccountToDb(data);
+    
+    if (result.error) {
+      console.error("Save error:", result.error);
+      toast({
+        title: "Error",
+        description: result.error,
+        variant: "destructive",
+      });
+    } else {
+      setBankAccount(data);
+      toast({
+        title: "Bank Account Added",
+        description: "Your bank account has been successfully added.",
+        variant: "default",
+      });
+      // Close the dialog if you have access to setOpen function
+      // setOpen(false);
+    }
+  } catch (error) {
+    console.error("Unexpected error:", error);
+    toast({
+      title: "Error",
+      description: "An unexpected error occurred. Please try again.",
+      variant: "destructive",
+    });
+  }
+};
+
+const handleRemoveBankAccount = async () => {
+  try {
+    const result = await removeBankAccountFromDb();
+    
+    if (result.error) {
+      console.error("Remove error:", result.error);
+      toast({
+        title: "Error",
+        description: result.error,
+        variant: "destructive",
+      });
+    } else {
+      setBankAccount({
+        bankName: "",
+        accountNumber: "",
+        accountName: "",
+      });
+      toast({
+        title: "Bank Account Removed",
+        description: "Your bank account has been removed.",
+        variant: "default",
+      });
+    }
+  } catch (error) {
+    console.error("Unexpected error:", error);
+    toast({
+      title: "Error",
+      description: "An unexpected error occurred. Please try again.",
+      variant: "destructive",
+    });
+  }
+};
 
   // Simulate real-time updates
   useEffect(() => {
@@ -1165,7 +1271,7 @@ export default function DashboardPage() {
                           </DialogHeader>
                           <BankAccountForm
                             onSuccess={async (data) => {
-                              const { error } = await saveBankAccountToDb(data);
+                              const { error } = await  saveBankAccountToDbAlternative(data);
                               if (error) {
                                 console.error("Save error:", error);
                                 toast({
@@ -1240,7 +1346,7 @@ export default function DashboardPage() {
                         </DialogHeader>
                         <BankAccountForm
                           onSuccess={async (data) => {
-                            const { error } = await saveBankAccountToDb(data);
+                            const { error } = await  saveBankAccountToDbAlternative(data);
                             if (error) {
                               console.error("Save error:", error);
                               toast({
