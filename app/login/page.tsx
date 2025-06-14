@@ -153,35 +153,35 @@ export default function LoginPage() {
 
   // After wallet connection, check if user exists
   useEffect(() => {
-    const checkUserExists = async () => {
-      if (connected && publicKey) {
-        setCheckingUser(true)
-        // Query your user/profiles table for this wallet address
-        const { data, error } = await supabase
-          .from("profiles")
-          .select("id")
-          .eq("wallet_address", publicKey.toString())
-          .single()
+  const checkUserExists = async () => {
+    if (connected && publicKey) {
+      setCheckingUser(true)
+      // Query your user/profiles table for this wallet address
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("id")
+        .eq("id", publicKey.toString()) // <-- FIXED LINE
+        .single()
 
-        if (error || !data) {
-          toast({
-            title: "Account Not Found",
-            description: "No account found for this wallet. Please register first.",
-            variant: "destructive",
-          })
-          setCheckingUser(false)
-          setTimeout(() => {
-            router.push("/register")
-          }, 1500)
-        } else {
-          // User exists, proceed to dashboard
-          router.push("/dashboard")
-        }
+      if (error || !data) {
+        toast({
+          title: "Account Not Found",
+          description: "No account found for this wallet. Please register first.",
+          variant: "destructive",
+        })
+        setCheckingUser(false)
+        setTimeout(() => {
+          router.push("/register")
+        }, 1500)
+      } else {
+        // User exists, proceed to dashboard
+        router.push("/dashboard")
       }
     }
-    checkUserExists()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connected, publicKey])
+  }
+  checkUserExists()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [connected, publicKey])
 
   const handleConnectWallet = async () => {
     try {
