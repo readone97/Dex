@@ -1,4 +1,3 @@
-
 "use client"
 
 import { useState, useEffect } from "react"
@@ -55,7 +54,7 @@ export default function RegisterPage() {
     setStep(2)
   }
 
-  // Step 2: Send OTP email
+  // Step 2: Send OTP for email verification
   const handleSendOtp = async (e: React.FormEvent) => {
     e.preventDefault()
     
@@ -70,68 +69,71 @@ export default function RegisterPage() {
 
     setIsLoading(true)
     try {
-      // First, try to sign up the user
-      const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+      // Send OTP to the email
+      const { data, error } = await supabase.auth.signInWithOtp({
         email: email.trim(),
-        password: Math.random().toString(36).slice(-8), // Temporary password
         options: {
+          shouldCreateUser: true, // This allows creating new users via OTP
           data: {
             username: username.trim()
           }
         }
       })
 
-      if (signUpError) {
-        // If user already exists, send OTP for sign in
-        if (signUpError.message.includes('already registered')) {
-          const { error: otpError } = await supabase.auth.signInWithOtp({
-            email: email.trim(),
-            options: {
-              shouldCreateUser: false
-            }
+      if (error) {
+        console.error("OTP send error:", error)
+        
+        if (error.message.includes('Signups not allowed')) {
+          toast({
+            title: "Registration Disabled",
+            description: "New account registration is currently disabled. Please contact support.",
+            variant: "destructive",
           })
-          if (otpError) throw otpError
+        } else if (error.message.includes('Email rate limit')) {
+          toast({
+            title: "Rate Limit Exceeded",
+            description: "Too many requests. Please wait before trying again.",
+            variant: "destructive",
+          })
         } else {
-          throw signUpError
+          toast({
+            title: "Failed to send OTP",
+            description: error.message || "Please try again later.",
+            variant: "destructive",
+          })
         }
+        return
       }
-      
+
+      // Successfully sent OTP
       toast({
-        title: "OTP Sent",
-        description: "Check your email for the verification code",
+        title: "OTP Sent!",
+        description: "Please check your email for the verification code.",
         variant: "default",
       })
+      
       setShowOtpInput(true)
+      
     } catch (error: any) {
       console.error("Send OTP Error:", error)
-      
-      // Handle specific database errors
-      if (error.message.includes('Database error saving new user')) {
-        toast({
-          title: "Registration Error",
-          description: "There was an issue creating your account. Please try again or contact support.",
-          variant: "destructive",
-        })
-      } else {
-        toast({
-          title: "Failed to send OTP",
-          description: error.message || "Please try again.",
-          variant: "destructive",
-        })
-      }
+      toast({
+        title: "Failed to send OTP",
+        description: error.message || "Please try again later.",
+        variant: "destructive",
+      })
     } finally {
       setIsLoading(false)
     }
   }
 
-  // Step 3: Verify OTP and complete registration
+  // Step 3: Verify OTP
   const handleVerifyOtp = async (e: React.FormEvent) => {
     e.preventDefault()
     
     if (!otp.trim()) {
       toast({
         title: "OTP required",
-        description: "Please enter the verification code",
+        description: "Please enter the verification code from your email",
         variant: "destructive",
       })
       return
@@ -139,49 +141,55 @@ export default function RegisterPage() {
 
     setIsLoading(true)
     try {
+      // Verify the OTP
       const { data, error } = await supabase.auth.verifyOtp({
         email: email.trim(),
         token: otp.trim(),
-        type: "email",
+        type: 'email'
       })
       
       if (error) {
-        console.error("Verify OTP Error:", error)
-        throw error
+        console.error("OTP verification error:", error)
+        
+        if (error.message.includes('Token has expired')) {
+          toast({
+            title: "OTP Expired",
+            description: "The verification code has expired. Please request a new one.",
+            variant: "destructive",
+          })
+        } else if (error.message.includes('Invalid token')) {
+          toast({
+            title: "Invalid OTP",
+            description: "The verification code is incorrect. Please check and try again.",
+            variant: "destructive",
+          })
+        } else {
+          toast({
+            title: "Verification failed",
+            description: error.message || "Please try again.",
+            variant: "destructive",
+          })
+        }
+        return
       }
       
       if (data.session && data.user) {
-        // Update user profile with username
-        const { error: updateError } = await supabase.auth.updateUser({
-          data: { username: username.trim() }
-        })
-        
-        if (updateError) {
-          console.warn("Failed to update username:", updateError)
-        }
-
         toast({
-          title: "Verification successful",
-          description: "Welcome to Amigo Exchange!",
+          title: "Registration Successful!",
+          description: "Your account has been created and verified.",
           variant: "default",
         })
         
-        // Small delay to show the success message
+        // Redirect to login page after successful registration
         setTimeout(() => {
-          router.push("/dashboard")
+          router.push("/login")
         }, 1500)
-      } else {
-        toast({
-          title: "Verification failed",
-          description: "No session created. Please try again.",
-          variant: "destructive",
-        })
       }
     } catch (error: any) {
       console.error("Verification Error:", error)
       toast({
         title: "Verification failed",
-        description: error.message || "Invalid OTP. Please try again.",
+        description: error.message || "Please try again.",
         variant: "destructive",
       })
     } finally {
@@ -198,6 +206,43 @@ export default function RegisterPage() {
   const changeEmail = () => {
     setShowOtpInput(false)
     setOtp("")
+  }
+
+  const resendOtp = async () => {
+    setIsLoading(true)
+    try {
+      const { error } = await supabase.auth.signInWithOtp({
+        email: email.trim(),
+        options: {
+          shouldCreateUser: true,
+          data: {
+            username: username.trim()
+          }
+        }
+      })
+
+      if (error) {
+        toast({
+          title: "Failed to resend OTP",
+          description: error.message,
+          variant: "destructive",
+        })
+      } else {
+        toast({
+          title: "OTP Resent!",
+          description: "Please check your email for the new verification code.",
+          variant: "default",
+        })
+      }
+    } catch (error: any) {
+      toast({
+        title: "Failed to resend OTP",
+        description: error.message || "Please try again.",
+        variant: "destructive",
+      })
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   return (
@@ -302,18 +347,37 @@ export default function RegisterPage() {
                   <>
                     <div className="space-y-2 animate-in fade-in slide-in-from-bottom-2">
                       <Label htmlFor="otp">Verification Code</Label>
+                      <div className="text-sm text-muted-foreground p-4 bg-muted rounded-lg">
+                        <p className="font-medium mb-2">📧 Check your email!</p>
+                        <p>We've sent a 6-digit verification code to <strong>{email}</strong></p>
+                        <p className="mt-2">Enter the code below to verify your account.</p>
+                      </div>
                       <Input
                         id="otp"
                         type="text"
-                        placeholder="Enter the 6-digit code"
+                        placeholder="Enter 6-digit code"
                         value={otp}
-                        onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                        required
+                        onChange={(e) => {
+                          const value = e.target.value.replace(/\D/g, '').slice(0, 6)
+                          setOtp(value)
+                        }}
+                        className="text-center text-lg tracking-widest"
                         maxLength={6}
-                        className="text-center tracking-widest font-mono text-lg"
+                        autoComplete="one-time-code"
                       />
                       <p className="text-xs text-muted-foreground">
-                        Enter the 6-digit code sent to your email.
+                        Didn't receive the code? 
+                        <button
+                          type="button"
+                          onClick={resendOtp}
+                          disabled={isLoading}
+                          className="ml-1 text-primary hover:underline disabled:opacity-50"
+                        >
+                          Resend OTP
+                        </button>
+                      </p>
+                      <p className="text-xs text-green-600">
+                        Code length: {otp.length}/6 {otp.length >= 4 ? "✓" : ""}
                       </p>
                     </div>
 
@@ -330,7 +394,7 @@ export default function RegisterPage() {
                         </Button>
                         <Button
                           type="submit"
-                          disabled={isLoading || !otp.trim() || otp.length !== 6}
+                          disabled={isLoading || otp.length < 4}
                         >
                           {isLoading ? (
                             <>
@@ -338,7 +402,7 @@ export default function RegisterPage() {
                               Verifying...
                             </>
                           ) : (
-                            "Verify"
+                            `Verify OTP${otp.length > 0 ? ` (${otp.length})` : ''}`
                           )}
                         </Button>
                       </div>
