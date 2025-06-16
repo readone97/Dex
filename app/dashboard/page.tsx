@@ -385,7 +385,7 @@ const handleSaveBankAccount = async (data: {
   accountName: string;
 }) => {
   try {
-    const result = await saveBankAccountToDb(data);
+    const result = await saveBankAccountToDbAlternative(data);
     
     if (result.error) {
       console.error("Save error:", result.error);
@@ -887,11 +887,52 @@ const handleRemoveBankAccount = async () => {
     setConvertToAmount("0.00");
   };
 
-  const getAvailableBalance = (symbol: string) => {
-    const token = tokens.find(
-      (t) => t.symbol.toLowerCase() === symbol.toLowerCase()
-    );
-    return token ? token.balance : "0.00";
+  // Token mint addresses for popular tokens
+  const TOKEN_MINTS = {
+    USDT: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB', // USDT
+    USDC: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', // USDC
+    SOL: 'So11111111111111111111111111111111111111112', // Wrapped SOL
+  };
+
+  // Get real token balance from SPL tokens
+  const getRealTokenBalance = (symbol: string): number => {
+    if (symbol.toLowerCase() === 'sol') {
+      return solBalance || 0;
+    }
+
+    const mintAddress = TOKEN_MINTS[symbol.toUpperCase() as keyof typeof TOKEN_MINTS];
+    if (!mintAddress) return 0;
+
+    const token = splTokens.find(t => t.mint === mintAddress);
+    return token ? token.amount : 0;
+  };
+
+  // Get formatted balance for display
+  const getAvailableBalance = (symbol: string): string => {
+    const balance = getRealTokenBalance(symbol);
+    return balance.toLocaleString(undefined, { 
+      minimumFractionDigits: 2, 
+      maximumFractionDigits: 6 
+    });
+  };
+
+  // Get balance for specific token with proper formatting
+  const getTokenBalanceForDisplay = (symbol: string): string => {
+    const balance = getRealTokenBalance(symbol);
+    if (balance === 0) return "0.00";
+    
+    // Format based on token type
+    if (symbol.toLowerCase() === 'sol') {
+      return balance.toLocaleString(undefined, { 
+        minimumFractionDigits: 2, 
+        maximumFractionDigits: 6 
+      });
+    } else {
+      return balance.toLocaleString(undefined, { 
+        minimumFractionDigits: 2, 
+        maximumFractionDigits: 2 
+      });
+    }
   };
 
   const fetchRealTimeRates = () => {
