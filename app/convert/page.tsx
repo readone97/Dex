@@ -61,6 +61,16 @@ import {
 import { useToast } from "@/hooks/use-toast";
 // import { AppHeader } from "@/components/app-header"
 
+const RPC_ENDPOINT =
+  "https://serene-wispy-model.solana-mainnet.quiknode.pro/2ebdf944147ac60d02e7030145216e4e1681dd2c/";
+
+// Correct mint addresses for popular tokens
+const TOKEN_MINTS = {
+  USDT: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB', // USDT
+  USDC: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', // USDC
+  SOL: 'So11111111111111111111111111111111111111112', // Wrapped SOL
+};
+
 export default function ConvertPage() {
   const router = useRouter();
   const { toast } = useToast();
@@ -69,52 +79,59 @@ export default function ConvertPage() {
   const [convertTo, setConvertTo] = useState("ngn");
   const [convertToAmount, setConvertToAmount] = useState("0.00");
   const [isConverting, setIsConverting] = useState(false);
-  const [solBalance, setSolBalance] = useState("0.00");
-  const [usdtBalance, setUsdtBalance] = useState("0.00");
-  const [usdcBalance, setUsdcBalance] = useState("0.00");
+  const [solBalance, setSolBalance] = useState<number>(0);
+  const [usdtBalance, setUsdtBalance] = useState<number>(0);
+  const [usdcBalance, setUsdcBalance] = useState<number>(0);
+  const [splTokens, setSplTokens] = useState<
+    { tokenAccount: string; mint: string; amount: number; decimals: number }[]
+  >([]);
+  const [isFetchingTokens, setIsFetchingTokens] = useState(false);
 
-  const { publicKey } = useWallet();
+  const { publicKey, connected } = useWallet();
   const [showConversionConfirmation, setShowConversionConfirmation] =
     useState(false);
   const [bankAccount, setBankAccount] = useState<{
     bankName: string;
     accountNumber: string;
     accountName: string;
-  } | null>({
-    bankName: "Access Bank",
-    accountNumber: "0123456789",
-    accountName: "John Doe",
-  });
+  } | null>(null);
   const [exchangeRates, setExchangeRates] = useState({
     usdt_ngn: 1550,
     usdc_ngn: 1545,
     sol_ngn: 155000,
   });
 
-  // Mock data for tokens
-  const [tokens, setTokens] = useState([
-    {
-      name: "USDT",
-      symbol: "USDT",
-      balance: "1,250.00",
-      value: "$1,250.00",
-      change: "+2.5%",
-    },
-    {
-      name: "USDC",
-      symbol: "USDC",
-      balance: "750.50",
-      value: "$750.50",
-      change: "+1.2%",
-    },
-    {
-      name: "Solana",
-      symbol: "SOL",
-      balance: "5.75",
-      value: "$574.25",
-      change: "+4.8%",
-    },
-  ]);
+  // Get real token balance from wallet
+  const getRealTokenBalance = (symbol: string): number => {
+    if (symbol.toLowerCase() === 'sol') {
+      return solBalance || 0;
+    }
+
+    const mintAddress = TOKEN_MINTS[symbol.toUpperCase() as keyof typeof TOKEN_MINTS];
+    if (!mintAddress) return 0;
+
+    const token = splTokens.find(t => t.mint === mintAddress);
+    return token ? token.amount : 0;
+  };
+
+  // Get formatted balance for display
+  const getAvailableBalance = (symbol: string): string => {
+    const balance = getRealTokenBalance(symbol);
+    if (balance === 0) return "0.00";
+    
+    // Format based on token type
+    if (symbol.toLowerCase() === 'sol') {
+      return balance.toLocaleString(undefined, { 
+        minimumFractionDigits: 2, 
+        maximumFractionDigits: 6 
+      });
+    } else {
+      return balance.toLocaleString(undefined, { 
+        minimumFractionDigits: 2, 
+        maximumFractionDigits: 2 
+      });
+    }
+  };
 
   useEffect(() => {
     async function fetchRates() {
@@ -163,63 +180,129 @@ export default function ConvertPage() {
     }
   }, [convertAmount, convertFrom, convertTo, exchangeRates]);
 
-  const getAvailableBalance = (symbol: string) => {
-    const token = tokens.find(
-      (t) => t.symbol.toLowerCase() === symbol.toLowerCase()
-    );
-    return token ? token.balance : "0.00";
-  };
+  // Fetch SOL balance
   useEffect(() => {
     const fetchSolBalance = async () => {
-      if (!publicKey) return;
-      const connection = new Connection(
-        "https://serene-wispy-model.solana-mainnet.quiknode.pro/2ebdf944147ac60d02e7030145216e4e1681dd2c/"
-      );
-      const balance = await connection.getBalance(publicKey);
-      setSolBalance((balance / LAMPORTS_PER_SOL).toFixed(4));
-    };
-    fetchSolBalance();
-  }, [publicKey]);
-
-  const USDT_MINT = "Es9vMFrzaCERk1uQh6xYt1gqF4sQJz6Gw5hFj2LkF7hP";
-  const USDC_MINT = "EPjFWdd5AufqSSqeM2q9k1WYq9wWG5nE1dL5QkZ5yH3U";
-
-  useEffect(() => {
-    const fetchSplTokenBalance = async (
-      mintAddress: PublicKeyInitData,
-      setter: {
-        (value: SetStateAction<string>): void;
-        (value: SetStateAction<string>): void;
-        (arg0: string): void;
-      }
-    ) => {
-      if (!publicKey) {
-        setter("0.00");
+      if (!publicKey || !connected) {
+        setSolBalance(0);
         return;
       }
+
       try {
-        const connection = new Connection(
-          "https://serene-wispy-model.solana-mainnet.quiknode.pro/2ebdf944147ac60d02e7030145216e4e1681dd2c/"
-        );
-        const mint = new PublicKey(mintAddress);
-        const ata = await getAssociatedTokenAddress(mint, publicKey);
-        const account = await getAccount(connection, ata);
-        // USDT and USDC have 6 decimals
-        const balance = Number(account.amount) / 1e6;
-        setter(
-          balance.toLocaleString(undefined, {
-            minimumFractionDigits: 2,
-            maximumFractionDigits: 6,
-          })
-        );
-      } catch (e) {
-        // If account doesn't exist, balance is zero
-        setter("0.00");
+        const connection = new Connection(RPC_ENDPOINT, "confirmed");
+        const balance = await connection.getBalance(publicKey);
+        setSolBalance(balance / LAMPORTS_PER_SOL);
+      } catch (error) {
+        console.error("Error fetching SOL balance:", error);
+        setSolBalance(0);
       }
     };
 
-    fetchSplTokenBalance(USDT_MINT, setUsdtBalance);
-    fetchSplTokenBalance(USDC_MINT, setUsdcBalance);
+    fetchSolBalance();
+    if (connected && publicKey) {
+      const interval = setInterval(fetchSolBalance, 10000);
+      return () => clearInterval(interval);
+    }
+  }, [publicKey, connected]);
+
+  // Fetch SPL tokens
+  useEffect(() => {
+    const fetchSplTokens = async () => {
+      if (!publicKey || !connected) {
+        setSplTokens([]);
+        setUsdtBalance(0);
+        setUsdcBalance(0);
+        return;
+      }
+
+      setIsFetchingTokens(true);
+      try {
+        const connection = new Connection(RPC_ENDPOINT, "confirmed");
+        const tokenAccounts = await connection.getParsedTokenAccountsByOwner(
+          publicKey,
+          {
+            programId: TOKEN_PROGRAM_ID,
+          }
+        );
+
+        const tokens = tokenAccounts.value
+          .map(({ pubkey, account }) => {
+            const parsed = account.data.parsed.info;
+            const mint = parsed.mint;
+            const amount = parsed.tokenAmount.uiAmount || 0;
+            const decimals = parsed.tokenAmount.decimals;
+            return {
+              tokenAccount: pubkey.toBase58(),
+              mint,
+              amount,
+              decimals,
+            };
+          })
+          .filter((t) => t.amount > 0);
+
+        setSplTokens(tokens);
+
+        // Set individual token balances
+        const usdtToken = tokens.find(t => t.mint === TOKEN_MINTS.USDT);
+        const usdcToken = tokens.find(t => t.mint === TOKEN_MINTS.USDC);
+        
+        setUsdtBalance(usdtToken ? usdtToken.amount : 0);
+        setUsdcBalance(usdcToken ? usdcToken.amount : 0);
+
+      } catch (error) {
+        console.error("Error fetching SPL tokens:", error);
+        setSplTokens([]);
+        setUsdtBalance(0);
+        setUsdcBalance(0);
+      } finally {
+        setIsFetchingTokens(false);
+      }
+    };
+
+    fetchSplTokens();
+    if (connected && publicKey) {
+      const interval = setInterval(fetchSplTokens, 30000);
+      return () => clearInterval(interval);
+    }
+  }, [connected, publicKey]);
+
+  // Fetch bank account from database
+  useEffect(() => {
+    const fetchBankAccount = async () => {
+      if (!publicKey) {
+        setBankAccount(null);
+        return;
+      }
+
+      try {
+        const { data, error } = await supabase
+          .from("profiles")
+          .select("bank_name, account_number, account_name")
+          .eq("wallet_address", publicKey.toString())
+          .maybeSingle();
+
+        if (error) {
+          console.error("Error fetching bank details:", error);
+          setBankAccount(null);
+          return;
+        }
+
+        if (data && data.bank_name && data.account_number && data.account_name) {
+          setBankAccount({
+            bankName: data.bank_name,
+            accountNumber: data.account_number,
+            accountName: data.account_name,
+          });
+        } else {
+          setBankAccount(null);
+        }
+      } catch (error) {
+        console.error("Failed to fetch bank account:", error);
+        setBankAccount(null);
+      }
+    };
+
+    fetchBankAccount();
   }, [publicKey]);
 
   const handleConvertCrypto = () => {
@@ -251,26 +334,15 @@ export default function ConvertPage() {
 
   const handleConversionConfirmed = () => {
     // Update token balances after conversion
-    setTokens((prevTokens) => {
+    setSplTokens((prevTokens) => {
       return prevTokens.map((token) => {
-        if (token.symbol.toLowerCase() === convertFrom.toLowerCase()) {
+        if (token.mint === TOKEN_MINTS[convertFrom.toUpperCase() as keyof typeof TOKEN_MINTS]) {
           // Decrease the balance of the token being converted
-          const currentBalance = Number.parseFloat(
-            token.balance.replace(/,/g, "")
-          );
+          const currentBalance = getRealTokenBalance(convertFrom);
           const newBalance = currentBalance - Number.parseFloat(convertAmount);
           return {
             ...token,
-            balance: newBalance
-              .toFixed(2)
-              .replace(/\B(?=(\d{3})+(?!\d))/g, ","),
-            value: `$${(
-              (newBalance *
-                Number.parseFloat(token.value.replace(/[$,]/g, ""))) /
-              currentBalance
-            )
-              .toFixed(2)
-              .replace(/\B(?=(\d{3})+(?!\d))/g, ",")}`,
+            amount: newBalance,
           };
         } else {
           return token;
@@ -317,7 +389,7 @@ export default function ConvertPage() {
       toast({
         title: "Exchange Rates Updated",
         description: "Latest market rates have been applied.",
-        variant: "success",
+        variant: "default",
       });
     }, 1500);
   };
@@ -374,17 +446,17 @@ export default function ConvertPage() {
                   )} */}
                   {convertFrom === "sol" && (
                     <div className="text-right text-xs text-muted-foreground">
-                      Available: {solBalance} SOL
+                      Available: {getAvailableBalance(convertFrom)}
                     </div>
                   )}
                   {convertFrom === "usdt" && (
                     <div className="text-right text-xs text-muted-foreground">
-                      Available: {usdtBalance} USDT
+                      Available: {getAvailableBalance(convertFrom)} USDT
                     </div>
                   )}
                   {convertFrom === "usdc" && (
                     <div className="text-right text-xs text-muted-foreground">
-                      Available: {usdcBalance} USDC
+                      Available: {getAvailableBalance(convertFrom)} USDC
                     </div>
                   )}
                 </div>
@@ -468,7 +540,7 @@ export default function ConvertPage() {
                               title: "Bank Account Updated",
                               description:
                                 "Your bank account has been successfully updated.",
-                              variant: "success",
+                              variant: "default",
                             });
                           }}
                         />
@@ -586,7 +658,7 @@ export default function ConvertPage() {
           toast({
             title: "Conversion Successful",
             description: `You have converted ${convertAmount} ${convertFrom.toUpperCase()} to ₦${convertToAmount}`,
-            variant: "success",
+            variant: "default",
           });
         }}
       />
@@ -635,7 +707,7 @@ export function ConversionConfirmationDialog({
 
   // Token mint addresses on Solana mainnet
   const SPL_MINTS = {
-    usdc: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+    usdc: "EPjFWdd5AufqSSqeM2q9k1WYq9wWG5nE1dL5QkZ5yH3U",
     usdt: "Es9vMFrzaCERn6jQz6Lw4d1pA9wwrjz5v6Yk9k1d4wQh",
   };
 
