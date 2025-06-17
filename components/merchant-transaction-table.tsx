@@ -1,15 +1,14 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useState } from "react"
 import { format } from "date-fns"
 import { ArrowUpDown, MoreHorizontal } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { supabase } from '@/lib/supabase/client'
 
-// Transaction interface matches your Supabase schema
+// Transaction interface matches the admin page transaction format
 interface Transaction {
   id: string
   userId: string
@@ -28,88 +27,13 @@ interface Transaction {
 }
 
 interface MerchantTransactionTableProps {
+  transactions: Transaction[]
   onViewTransaction: (id: string) => void
 }
 
-export function MerchantTransactionTable({ onViewTransaction }: MerchantTransactionTableProps) {
+export function MerchantTransactionTable({ transactions, onViewTransaction }: MerchantTransactionTableProps) {
   const [sortBy, setSortBy] = useState<string>("createdAt")
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc")
-  const [transactions, setTransactions] = useState<Transaction[]>([])
-
-  // Fetch transactions from Supabase and map to UI model
-  useEffect(() => {
-    const fetchTransactions = async () => {
-      const { data, error } = await supabase
-        .from('transactions')
-        .select(`
-          id,
-          created_at,
-          updated_at,
-          tx_id,
-          amount_from,
-          currency_from,
-          amount_to,
-          currency_to,
-          bank_details,
-          status,
-          notes,
-          profiles:user_id (
-            username
-          )
-        `)
-        .order('created_at', { ascending: false })
-
-      if (error) {
-        console.error("Error fetching transactions:", error)
-        setTransactions([])
-        return
-      }
-
-      // Map Supabase data to Transaction interface
-      const mapped = (data ?? []).map((t: any) => ({
-        id: t.id,
-        userId: t.user_id,
-        userName: t.profiles?.username || "",
-        fromAmount: t.amount_from,
-        fromCurrency: t.currency_from,
-        toAmount: t.amount_to,
-        toCurrency: t.currency_to,
-        bankName: t.bank_details?.bankName || "",
-        accountNumber: t.bank_details?.accountNumber || "",
-        accountName: t.bank_details?.accountName || "",
-        status: t.status,
-        createdAt: t.created_at,
-        updatedAt: t.updated_at,
-        notes: t.notes || ""
-      }))
-      setTransactions(mapped)
-    }
-
-    fetchTransactions()
-
-    // Subscribe to realtime changes
-    const channel = supabase
-      .channel('realtime-transactions')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'transactions' },
-        fetchTransactions
-      )
-      .subscribe()
-
-    return () => { channel.unsubscribe() }
-  }, [])
-
-  // Update transaction status in Supabase
-  const updateStatus = async (id: string, status: string) => {
-    const { error } = await supabase
-      .from('transactions')
-      .update({ status })
-      .eq('id', id)
-
-    if (error) alert('Update failed')
-    // Optionally, refetch transactions or optimistically update state here
-  }
 
   // Sorting logic
   const sortedTransactions = [...transactions].sort((a, b) => {
@@ -183,8 +107,13 @@ export function MerchantTransactionTable({ onViewTransaction }: MerchantTransact
           ) : (
             sortedTransactions.map((transaction) => (
               <TableRow key={transaction.id}>
-                <TableCell className="font-medium">{transaction.id}</TableCell>
-                <TableCell>{transaction.userName}</TableCell>
+                <TableCell className="font-medium">
+                  {transaction.id.length > 8 ? `${transaction.id.substring(0, 8)}...` : transaction.id}
+                </TableCell>
+                <TableCell>
+                  <div className="font-medium">{transaction.userName || transaction.accountName}</div>
+                  <div className="text-sm text-muted-foreground">{transaction.userId}</div>
+                </TableCell>
                 <TableCell>
                   <div className="font-medium">
                     {transaction.fromAmount} {transaction.fromCurrency}
@@ -194,8 +123,9 @@ export function MerchantTransactionTable({ onViewTransaction }: MerchantTransact
                   </div>
                 </TableCell>
                 <TableCell>
-                  <div>{transaction.bankName}</div>
+                  <div className="font-medium">{transaction.bankName}</div>
                   <div className="text-sm text-muted-foreground">{transaction.accountNumber}</div>
+                  <div className="text-xs text-muted-foreground">{transaction.accountName}</div>
                 </TableCell>
                 <TableCell>
                   <div
@@ -204,7 +134,14 @@ export function MerchantTransactionTable({ onViewTransaction }: MerchantTransact
                     {transaction.status.charAt(0).toUpperCase() + transaction.status.slice(1)}
                   </div>
                 </TableCell>
-                <TableCell>{format(new Date(transaction.createdAt), "MMM d, yyyy h:mm a")}</TableCell>
+                <TableCell>
+                  <div className="font-medium">
+                    {format(new Date(transaction.createdAt), "MMM d, yyyy")}
+                  </div>
+                  <div className="text-sm text-muted-foreground">
+                    {format(new Date(transaction.createdAt), "h:mm a")}
+                  </div>
+                </TableCell>
                 <TableCell className="text-right">
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
@@ -217,12 +154,6 @@ export function MerchantTransactionTable({ onViewTransaction }: MerchantTransact
                       <DropdownMenuItem onClick={() => onViewTransaction(transaction.id)}>
                         View details
                       </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => updateStatus(transaction.id, "complete")}>
-                        Mark as Complete
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => updateStatus(transaction.id, "rejected")}>
-                        Reject
-                      </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
                 </TableCell>
@@ -233,4 +164,4 @@ export function MerchantTransactionTable({ onViewTransaction }: MerchantTransact
       </Table>
     </div>
   )
-}
+} 
