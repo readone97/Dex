@@ -69,7 +69,7 @@ export default function Home() {
 								</div>
 							</div>
 							<h1 className="text-4xl md:text-6xl font-black mb-3 md:mb-4 bg-gradient-to-r from-[rgb(195,195,195)] to-[rgba(195,195,195, 30%)] text-transparent bg-clip-text">
-								Smooth Crypto-to-Fiat
+								Secure Crypto-to-Fiat
 								<br />
 								Trading on Solana
 							</h1>
@@ -81,9 +81,9 @@ export default function Home() {
 								directly to your
 								<span className="text-[#c3c3c3] font-black">
 									{' '}
-									local bank account
+									local bank account.
 								</span>{' '}
-								in your locality
+							
 							</p>
 							<div className="flex lg:justify-center">
 								<GetStartedButton />
@@ -164,12 +164,7 @@ export default function Home() {
 							finance.
 						</h2>
 						<p className="text-sm lg:text-base text-[#c3c3c3] mb-8">
-							Amigoxchange makes decentralized finance (DeFi) accessible to
-							everyone, simplifying the process of trading crypto assets for
-							local currencies. Amigo Exchange aims to bridge the gap between
-							digital and traditional finance, providing users with a secure and
-							efficient platform for asset swaps (crypto-to-crypto) and
-							crypto-to-fiat conversion.
+						AmigoXchange simplifies DeFi, making it easy for anyone to trade crypto for local currencies. It bridges digital and traditional finance with secure crypto and fiat swaps.
 						</p>
 
 						<div className="grid grid-cols-2 gap-y-4 mb-8 text-[#c3c3c3] font-medium">
