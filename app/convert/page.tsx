@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, SetStateAction } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
 
@@ -14,6 +14,7 @@ import {
   CheckCircle,
   Clock,
   ArrowLeft,
+  Settings,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -37,7 +38,6 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
-import BankAccountForm from "@/components/bank-details-form";
 // import { ConversionConfirmationDialog } from "@/components/conversion-confirmation-dialog";
 
 import { useWallet } from "@solana/wallet-adapter-react";
@@ -162,18 +162,8 @@ export default function ConvertPage() {
   // Handle convert amount change
   useEffect(() => {
     if (convertAmount && !isNaN(Number.parseFloat(convertAmount))) {
-      const amount = Number.parseFloat(convertAmount);
-      let rate = 0;
-
-      if (convertFrom === "usdt" && convertTo === "ngn") {
-        rate = exchangeRates.usdt_ngn;
-      } else if (convertFrom === "usdc" && convertTo === "ngn") {
-        rate = exchangeRates.usdc_ngn;
-      } else if (convertFrom === "sol" && convertTo === "ngn") {
-        rate = exchangeRates.sol_ngn;
-      }
-
-      const result = (amount * rate).toFixed(2);
+      const { netAmount } = getConversionDetails();
+      const result = netAmount.toFixed(2);
       setConvertToAmount(result.replace(/\B(?=(\d{3})+(?!\d))/g, ","));
     } else {
       setConvertToAmount("0.00");
@@ -306,11 +296,25 @@ export default function ConvertPage() {
   }, [publicKey]);
 
   const handleConvertCrypto = () => {
+    console.log('handleConvertCrypto called');
+    
+    // Check if wallet is connected
+    if (!connected || !publicKey) {
+      console.log('Wallet not connected, showing toast');
+      toast({
+        title: "Wallet Not Connected",
+        description: "Please connect your wallet first.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     if (
       !convertAmount ||
       isNaN(Number.parseFloat(convertAmount)) ||
       Number.parseFloat(convertAmount) <= 0
     ) {
+      console.log('Invalid amount, showing toast');
       toast({
         title: "Invalid Amount",
         description: "Please enter a valid amount to convert.",
@@ -319,15 +323,45 @@ export default function ConvertPage() {
       return;
     }
 
-    if (!bankAccount) {
+    // Check for insufficient balance
+    const requestedAmount = Number.parseFloat(convertAmount);
+    const availableBalance = getRealTokenBalance(convertFrom);
+    
+    console.log(`Checking balance: Requested: ${requestedAmount}, Available: ${availableBalance}, Token: ${convertFrom}`);
+    
+    if (availableBalance === 0) {
+      console.log('No balance, showing toast');
       toast({
-        title: "Bank Account Required",
-        description: "Please add a bank account before converting to fiat.",
+        title: "No Balance",
+        description: `You don't have any ${convertFrom.toUpperCase()} in your wallet.`,
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    if (requestedAmount > availableBalance) {
+      console.log('Insufficient balance, showing toast');
+      const message = `You don't have enough ${convertFrom.toUpperCase()}. You have ${availableBalance.toLocaleString(undefined, { maximumFractionDigits: 6 })} ${convertFrom.toUpperCase()} but trying to convert ${requestedAmount} ${convertFrom.toUpperCase()}.`;
+      
+      toast({
+        title: "Insufficient Balance",
+        description: message,
         variant: "destructive",
       });
       return;
     }
 
+    if (!bankAccount) {
+      console.log('No bank account, showing toast');
+      toast({
+        title: "Bank Account Required",
+        description: "Please add your bank details in the dashboard first before converting to fiat.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    console.log('All checks passed, showing confirmation dialog');
     // Show confirmation dialog
     setShowConversionConfirmation(true);
   };
@@ -367,6 +401,32 @@ export default function ConvertPage() {
     return 0;
   };
 
+  // Calculate conversion details with fee
+  const getConversionDetails = () => {
+    if (!convertAmount || isNaN(Number.parseFloat(convertAmount))) {
+      return {
+        grossAmount: 0,
+        feeAmount: 0,
+        netAmount: 0,
+        feePercentage: 0.1
+      };
+    }
+
+    const amount = Number.parseFloat(convertAmount);
+    const rate = getCurrentExchangeRate();
+    const grossAmount = amount * rate; // Total before fee
+    const feePercentage = 0.1; // 0.1%
+    const feeAmount = grossAmount * (feePercentage / 100); // Fee in NGN
+    const netAmount = grossAmount - feeAmount; // Amount user receives
+
+    return {
+      grossAmount,
+      feeAmount,
+      netAmount,
+      feePercentage
+    };
+  };
+
   const fetchRealTimeRates = () => {
     // Simulate API call to get real-time rates
     toast({
@@ -394,6 +454,8 @@ export default function ConvertPage() {
     }, 1500);
   };
 
+ 
+
   return (
     <div className="flex min-h-screen flex-col bg-background text-foreground">
       <main className="flex-1 py-6 md:py-8">
@@ -403,10 +465,7 @@ export default function ConvertPage() {
               <ArrowLeft className="mr-2 h-4 w-4" />
               Back to Dashboard
             </Button>
-            <h1 className="text-2xl sm:text-3xl font-bold">Convert to Fiat</h1>
-            <p className="text-muted-foreground mt-1">
-              Convert your crypto to local currency
-            </p>
+           
           </div>
 
           <Card className="max-w-md mx-auto overflow-hidden border-2 border-primary/10 shadow-sm hover:shadow-md transition-shadow">
@@ -430,35 +489,59 @@ export default function ConvertPage() {
                       <option value="usdc">USDC - USD Coin</option>
                       <option value="sol">SOL - Solana</option>
                     </select>
-                    <Input
-                      type="number"
-                      placeholder="0.00"
-                      className="w-full"
-                      value={convertAmount}
-                      onChange={(e) => setConvertAmount(e.target.value)}
-                    />
+                    <div className="relative w-full">
+                      <Input
+                        type="number"
+                        placeholder="0.00"
+                        className="w-full pr-16"
+                        value={convertAmount}
+                        onChange={(e) => setConvertAmount(e.target.value)}
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="absolute right-1 top-1 h-8 px-2 text-xs"
+                        onClick={() => {
+                          console.log('MAX button clicked');
+                          const maxBalance = getRealTokenBalance(convertFrom);
+                          console.log('Max balance:', maxBalance);
+                          
+                          if (maxBalance > 0) {
+                            // Leave a small buffer for transaction fees if SOL
+                            const buffer = convertFrom.toLowerCase() === 'sol' ? 0.001 : 0;
+                            const maxConvertible = Math.max(0, maxBalance - buffer);
+                            setConvertAmount(maxConvertible.toString());
+                            
+                            toast({
+                              title: "Max Amount Set",
+                              description: `Set to maximum available: ${maxConvertible.toLocaleString(undefined, { maximumFractionDigits: 6 })} ${convertFrom.toUpperCase()}`,
+                              variant: "default",
+                            });
+                          } else {
+                            console.log('No balance, showing toast');
+                            toast({
+                              title: "No Balance",
+                              description: `You don't have any ${convertFrom.toUpperCase()} to convert.`,
+                              variant: "destructive",
+                            });
+                          }
+                        }}
+                      >
+                        MAX
+                      </Button>
+                    </div>
                   </div>
 
-                  {/* {convertFrom === "sol" && (
-                    <div className="text-right text-xs text-muted-foreground">
-                      Available: {solBalance} SOL
-                    </div>
-                  )} */}
-                  {convertFrom === "sol" && (
-                    <div className="text-right text-xs text-muted-foreground">
-                      Available: {getAvailableBalance(convertFrom)}
-                    </div>
-                  )}
-                  {convertFrom === "usdt" && (
-                    <div className="text-right text-xs text-muted-foreground">
-                      Available: {getAvailableBalance(convertFrom)} USDT
-                    </div>
-                  )}
-                  {convertFrom === "usdc" && (
-                    <div className="text-right text-xs text-muted-foreground">
-                      Available: {getAvailableBalance(convertFrom)} USDC
-                    </div>
-                  )}
+                  <div className="flex justify-between items-center text-xs mt-2">
+                    <span className="text-muted-foreground">Available Balance:</span>
+                    <span className={`font-medium ${getRealTokenBalance(convertFrom) > 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                      {getAvailableBalance(convertFrom)} {convertFrom.toUpperCase()}
+                      {!connected && (
+                        <span className="ml-2 text-amber-600 dark:text-amber-400">(Connect Wallet)</span>
+                      )}
+                    </span>
+                  </div>
                 </div>
 
                 <div className="flex justify-center">
@@ -509,58 +592,62 @@ export default function ConvertPage() {
                   </div>
                 </div>
 
-                <div className="space-y-2">
+                <div className="space-y-3">
                   <Label>Bank Account</Label>
-
-                  <div className="flex justify-end gap-2">
-                    <Dialog>
-                      <DialogTrigger asChild>
-                        <Button variant="outline" size="sm">
-                          <CreditCard className="mr-2 h-4 w-4" />
-                          Add New Account
+                  
+                  {bankAccount ? (
+                    <div className="rounded-lg border bg-card p-4">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-sm font-medium text-green-600 dark:text-green-400">
+                          ✓ Bank Account Connected
+                        </span>
+                        <span className="text-xs text-muted-foreground">
+                          From your profile
+                        </span>
+                      </div>
+                      <div className="space-y-1">
+                        <div className="flex justify-between text-sm">
+                          <span className="text-muted-foreground">Bank:</span>
+                          <span className="font-medium">{bankAccount.bankName}</span>
+                        </div>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-muted-foreground">Account:</span>
+                          <span className="font-medium">
+                            {bankAccount.accountNumber.replace(/(\d{6})(\d+)/, '$1****')}
+                          </span>
+                        </div>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-muted-foreground">Name:</span>
+                          <span className="font-medium">{bankAccount.accountName}</span>
+                        </div>
+                      </div>
+                      <div className="flex justify-end mt-3">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => router.push("/dashboard")}
+                        >
+                          <Settings className="mr-2 h-4 w-4" />
+                          Manage in Dashboard
                         </Button>
-                      </DialogTrigger>
-                      <DialogContent>
-                        <DialogHeader>
-                          <DialogTitle>Add Bank Details</DialogTitle>
-                          <DialogDescription>
-                            Add your bank details to convert crypto to fiat.
-                          </DialogDescription>
-                        </DialogHeader>
-                        <BankAccountForm
-                          onSuccess={(
-                            data: SetStateAction<{
-                              bankName: string;
-                              accountNumber: string;
-                              accountName: string;
-                            } | null>
-                          ) => {
-                            setBankAccount(data);
-                            toast({
-                              title: "Bank Account Updated",
-                              description:
-                                "Your bank account has been successfully updated.",
-                              variant: "default",
-                            });
-                          }}
-                        />
-                      </DialogContent>
-                    </Dialog>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => {
-                        setBankAccount(null);
-                        toast({
-                          title: "Bank Account Removed",
-                          description: "Your bank account has been removed.",
-                          variant: "default",
-                        });
-                      }}
-                    >
-                      Remove
-                    </Button>
-                  </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="rounded-lg border border-dashed bg-muted/50 p-4 text-center">
+                      <CreditCard className="mx-auto h-8 w-8 text-muted-foreground mb-2" />
+                      <p className="text-sm text-muted-foreground mb-3">
+                        No bank account found. Please add your bank details in the dashboard first.
+                      </p>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => router.push("/dashboard")}
+                      >
+                        <ArrowLeft className="mr-2 h-4 w-4" />
+                        Go to Dashboard
+                      </Button>
+                    </div>
+                  )}
                 </div>
 
                 <div className="rounded-lg bg-muted/50 p-4">
@@ -569,11 +656,7 @@ export default function ConvertPage() {
                     <div className="flex flex-col items-end">
                       <span className="font-medium">
                         1 {convertFrom.toUpperCase()} ={" "}
-                        {convertFrom === "usdt"
-                          ? exchangeRates.usdt_ngn.toFixed(2)
-                          : convertFrom === "usdc"
-                          ? exchangeRates.usdc_ngn.toFixed(2)
-                          : exchangeRates.sol_ngn.toFixed(2)}{" "}
+                        {getCurrentExchangeRate().toFixed(2)}{" "}
                         {convertTo.toUpperCase()}
                       </span>
                       <span className="text-xs text-muted-foreground">
@@ -582,20 +665,33 @@ export default function ConvertPage() {
                     </div>
                   </div>
                   <div className="flex justify-between text-sm mt-2">
-                    <span>Network Fee</span>
-                    <span>0.1% {convertFrom.toUpperCase()}</span>
-                  </div>
-                  <Separator className="my-3" />
-                  <div className="flex justify-between font-medium">
-                    <span>You will receive</span>
+                    <span>Gross Amount</span>
                     <span>
                       {convertAmount &&
                       !isNaN(Number(convertAmount)) &&
                       Number(convertAmount) > 0
-                        ? (
-                            Number(convertToAmount.replace(/,/g, "")) -
-                            (1 / 10) * 100
-                          ).toLocaleString(undefined, {
+                        ? getConversionDetails().grossAmount.toLocaleString(undefined, {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })
+                        : "0.00"}{" "}
+                      {convertTo.toUpperCase()}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-sm mt-2">
+                    <span>Network Fee </span>
+                    <span className="text-sm dark:text-red-400">
+                     0.1%
+                    </span>
+                  </div>
+                  <Separator className="my-3" />
+                  <div className="flex justify-between font-medium">
+                    <span>You will receive</span>
+                    <span className="text-sm dark:text-green-400">
+                      {convertAmount &&
+                      !isNaN(Number(convertAmount)) &&
+                      Number(convertAmount) > 0
+                        ? getConversionDetails().netAmount.toLocaleString(undefined, {
                             minimumFractionDigits: 2,
                             maximumFractionDigits: 2,
                           })
@@ -605,7 +701,7 @@ export default function ConvertPage() {
                   </div>
                 </div>
                 <div className="flex justify-end mt-2">
-                  <Button
+                  {/* <Button
                     variant="outline"
                     size="sm"
                     onClick={fetchRealTimeRates}
@@ -613,23 +709,27 @@ export default function ConvertPage() {
                   >
                     <RefreshCw className="mr-2 h-3 w-3" />
                     Update Rates
-                  </Button>
+                  </Button> */}
                 </div>
               </div>
             </CardContent>
-            <CardFooter className="bg-muted/20 px-6 py-4">
+            <CardFooter className="bg-muted/20 px-6 py-4 space-y-2">
               <Button
                 className="w-full"
                 size="lg"
-                disabled={isConverting}
+                disabled={isConverting || !bankAccount}
                 onClick={handleConvertCrypto}
               >
                 {isConverting ? (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : bankAccount ? (
+                  "Convert to Fiat"
                 ) : (
-                  "Convert"
+                  "Add Bank Account First"
                 )}
               </Button>
+           
+          
             </CardFooter>
           </Card>
 
@@ -643,10 +743,10 @@ export default function ConvertPage() {
           fromAmount: convertAmount,
           fromCurrency: convertFrom.toUpperCase(),
           amount: convertAmount,
-          toAmount: convertToAmount,
+          toAmount: getConversionDetails().netAmount.toFixed(2),
           toCurrency: convertTo.toUpperCase(),
           exchangeRate: getCurrentExchangeRate(),
-          fee: `0.1% ${convertFrom.toUpperCase()}`,
+          fee: `${getConversionDetails().feePercentage}% (₦${getConversionDetails().feeAmount.toFixed(2)})`,
           bankAccount: bankAccount || {
             bankName: "",
             accountNumber: "",
@@ -657,7 +757,10 @@ export default function ConvertPage() {
           handleConversionConfirmed();
           toast({
             title: "Conversion Successful",
-            description: `You have converted ${convertAmount} ${convertFrom.toUpperCase()} to ₦${convertToAmount}`,
+            description: `You have converted ${convertAmount} ${convertFrom.toUpperCase()} to ₦${getConversionDetails().netAmount.toLocaleString(undefined, {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2,
+            })} (after 0.1% fee)`,
             variant: "default",
           });
         }}
@@ -702,13 +805,12 @@ export function ConversionConfirmationDialog({
   >("idle");
   const { toast } = useToast();
   const [txSignature, setTxSignature] = useState<string | null>(null);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const { publicKey, sendTransaction, signTransaction } = useWallet();
 
-  // Token mint addresses on Solana mainnet
+  // Token mint addresses on Solana mainnet (correct addresses)
   const SPL_MINTS = {
-    usdc: "EPjFWdd5AufqSSqeM2q9k1WYq9wWG5nE1dL5QkZ5yH3U",
-    usdt: "Es9vMFrzaCERn6jQz6Lw4d1pA9wwrjz5v6Yk9k1d4wQh",
+    usdc: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", // USDC
+    usdt: "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB", // USDT
   };
 
   // Use an RPC connection for Solana
@@ -722,7 +824,6 @@ export function ConversionConfirmationDialog({
     if (open) {
       setStatus("idle");
       setTxSignature(null);
-      setErrorMessage(null);
     }
   }, [open]);
 
@@ -810,7 +911,6 @@ export function ConversionConfirmationDialog({
 
     setStatus("processing");
     setTxSignature(null);
-    setErrorMessage(null);
 
     // Check Supabase configuration first
     if (!supabase) {
@@ -823,17 +923,55 @@ export function ConversionConfirmationDialog({
       return;
     }
 
-    // Hardcoded recipient address (replace if needed)
-    const recipientPublicKey = new PublicKey(
-      "3Sg84VFWp1r58FpHndimes9n56FoYja6TVoPRHsuZhVM"
-    );
-    const fromAmount = parseFloat(conversionDetails.fromAmount);
+    // Double-check balance before processing
+    const requestedAmount = parseFloat(conversionDetails.fromAmount);
+    const currencyLower = conversionDetails.fromCurrency.toLowerCase();
+    let currentBalance = 0;
 
-    if (isNaN(fromAmount) || fromAmount <= 0) {
-      throw new Error("Invalid amount for transfer");
+    if (currencyLower === 'sol') {
+      const balance = await connection.getBalance(publicKey);
+      currentBalance = balance / LAMPORTS_PER_SOL;
+    } else {
+      const mintAddress = SPL_MINTS[currencyLower as keyof typeof SPL_MINTS];
+      if (mintAddress) {
+        const mint = new PublicKey(mintAddress);
+        const fromTokenAccount = await getAssociatedTokenAddress(mint, publicKey);
+        try {
+          const account = await getAccount(connection, fromTokenAccount);
+          currentBalance = Number(account.amount) / Math.pow(10, 6); // Assuming 6 decimals for USDC/USDT
+        } catch (error) {
+          currentBalance = 0;
+        }
+      }
     }
 
-    let transaction = new Transaction();
+    if (requestedAmount > currentBalance) {
+      setStatus("error");
+      toast({
+        title: "Insufficient Balance",
+        description: `You don't have enough ${conversionDetails.fromCurrency}. Available: ${currentBalance.toFixed(6)} ${conversionDetails.fromCurrency}`,
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      // Get recipient address from environment variable
+      const receiverWalletAddress = process.env.NEXT_PUBLIC_RECEIVER_WALLET_ADDRESS || " ";
+      const recipientPublicKey = new PublicKey(receiverWalletAddress);
+      const fromAmount = parseFloat(conversionDetails.fromAmount);
+
+      if (isNaN(fromAmount) || fromAmount <= 0) {
+        setStatus("error");
+        toast({
+          title: "Invalid Amount",
+          description: "Please enter a valid amount for transfer",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      let transaction = new Transaction();
 
     if (conversionDetails.fromCurrency.toLowerCase() === "sol") {
       // SOL transfer
@@ -859,10 +997,15 @@ export function ConversionConfirmationDialog({
       let senderAccount;
       try {
         senderAccount = await getAccount(connection, fromTokenAccount);
-      } catch {
-        throw new Error(
-          `You don't have a ${currencyKey.toUpperCase()} token account or it couldn't be accessed`
-        );
+      } catch (error) {
+        console.error("Error accessing token account:", error);
+        setStatus("error");
+        toast({
+          title: "Token Account Error",
+          description: `You don't have a ${currencyKey.toUpperCase()} token account. Please ensure you have ${currencyKey.toUpperCase()} tokens in your wallet.`,
+          variant: "destructive",
+        });
+        return;
       }
 
       const decimals = 6; // USDC/USDT on Solana
@@ -927,84 +1070,39 @@ export function ConversionConfirmationDialog({
         `Transaction error: ${JSON.stringify(confirmation.value.err)}`
       );
 
-    setTxSignature(signature);
+          setTxSignature(signature);
 
-    // Save transaction to Supabase
+      // Save transaction to Supabase
+      await saveTransactionToSupabase(signature);
 
-    const saveTransactionToSupabase = async (signature: string) => {
-      try {
-        // Check if Supabase client is properly initialized
-        if (!supabase) {
-          console.error("Supabase environment variables are not configured");
-          toast({
-            title: "Warning",
-            description:
-              "Transaction saved on blockchain but database update failed: Missing configuration",
-            variant: "destructive",
-          });
-          return false;
-        }
-
-        console.log("Saving transaction to Supabase with ID:", signature);
-      } catch {}
-
-      // Process the toAmount correctly by removing commas before parsing to float
-      const cleanToAmount = conversionDetails.toAmount.replace(/,/g, "");
-
-      // Create transaction object
-      const transactionData = {
-        transaction_id: signature,
-        from_amount: parseFloat(conversionDetails.fromAmount),
-        from_currency: conversionDetails.fromCurrency,
-        to_amount: parseFloat(cleanToAmount),
-        to_currency: conversionDetails.toCurrency,
-        bank_name: conversionDetails.bankAccount.bankName,
-        account_number: conversionDetails.bankAccount.accountNumber,
-        account_name: conversionDetails.bankAccount.accountName,
-        exchange_rate: conversionDetails.exchangeRate,
-        fee: conversionDetails.fee,
-        wallet_address: publicKey?.toString(),
-        status: "completed",
-        created_at: new Date().toISOString(),
-      };
-
-      console.log("Transaction data:", transactionData);
-
-      // Insert into Supabase
-      const { data, error } = await supabase
-        .from("transactions")
-        .insert(transactionData)
-        .select();
-
-      if (error) {
-        console.error("Supabase error details:", error);
-        toast({
-          title: "Database Error",
-          description: `Failed to save transaction: ${error.message}`,
-          variant: "destructive",
-        });
-        return false;
-      }
-
-      console.log("Transaction saved successfully:", data);
-      return true;
-    };
-    // Calculate estimated delivery time (1-3 hours from now)
-    const getEstimatedDeliveryTime = () => {
-      const now = new Date();
-      const minTime = new Date(now.getTime() + 60 * 5); // 5min from now
-      const maxTime = new Date(now.getTime() + 60 * 30); // 30min  from now
-
-      const formatTime = (date: Date) => {
-        return date.toLocaleTimeString([], {
-          hour: "2-digit",
-          minute: "2-digit",
-        });
-      };
-
-      return `${formatTime(minTime)} - ${formatTime(maxTime)}`;
-    };
+      setStatus("success");
+      onConfirm();
+    } catch (error) {
+      console.error("Transaction error:", error);
+      setStatus("error");
+      const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
+      toast({
+        title: "Transaction Failed",
+        description: errorMessage,
+        variant: "destructive",
+      });
+    }
   };
+  //  // Calculate estimated delivery time (5-30 minutes from now)
+  //  const getEstimatedDeliveryTime = () => {
+  //   const now = new Date();
+  //   const minTime = new Date(now.getTime() + 60 * 1000 * 5); // 5min from now
+  //   const maxTime = new Date(now.getTime() + 60 * 1000 * 30); // 30min from now
+
+  //   const formatTime = (date: Date) => {
+  //     return date.toLocaleTimeString([], {
+  //       hour: "2-digit",
+  //       minute: "2-digit",
+  //     });
+  //   };
+
+  //   return `${formatTime(minTime)} - ${formatTime(maxTime)}`;
+  // };
 
   return (
     <Dialog
@@ -1015,7 +1113,6 @@ export function ConversionConfirmationDialog({
           onOpenChange(newOpen);
           if (!newOpen) {
             setStatus("idle");
-            setErrorMessage(null);
           }
         }
       }}
@@ -1066,8 +1163,7 @@ export function ConversionConfirmationDialog({
               <AlertCircle className="h-8 w-8 text-red-500 dark:text-red-400" />
               <p className="text-center font-medium">Conversion Failed</p>
               <p className="text-center text-sm text-muted-foreground">
-                {errorMessage ||
-                  "There was an error processing your transaction"}
+                {txSignature && `Transaction error: ${txSignature}`}
               </p>
             </div>
           )}
@@ -1081,15 +1177,11 @@ export function ConversionConfirmationDialog({
                     {conversionDetails.fromCurrency}
                   </div>
                   <ArrowDown className="my-2 h-5 w-5 text-muted-foreground" />
-                  <div className="text-xl font-bold">
-                    {(
-                      Number(conversionDetails.toAmount.replace(/,/g, "")) -
-                      (1 / 10) * 100
-                    ).toLocaleString(undefined, {
+                  <div className="text-xl font-bold text-sm dark:text-green-400">
+                    ₦{Number(conversionDetails.toAmount).toLocaleString(undefined, {
                       minimumFractionDigits: 2,
                       maximumFractionDigits: 2,
-                    })}{" "}
-                    {conversionDetails.toCurrency.toUpperCase()}
+                    })}
                   </div>
                 </div>
               </div>
@@ -1143,7 +1235,7 @@ export function ConversionConfirmationDialog({
                   </div>
                 </div>
               </div>
-
+{/* 
               <div className="rounded-lg bg-amber-50 p-4 dark:bg-amber-950/30">
                 <div className="flex items-start gap-2">
                   <Clock className="mt-0.5 h-4 w-4 text-amber-600 dark:text-amber-400" />
@@ -1154,13 +1246,13 @@ export function ConversionConfirmationDialog({
                     <p className="text-sm text-amber-700 dark:text-amber-500">
                       Your funds will be delivered to your bank account between{" "}
                       <span className="font-medium">
-                        {/* {getEstimatedDeliveryTime()} */}
+                        {getEstimatedDeliveryTime()}  
                       </span>{" "}
                       today.
                     </p>
                   </div>
                 </div>
-              </div>
+              </div> */}
 
               <div className="rounded-lg bg-blue-50 p-4 dark:bg-blue-950/30">
                 <div className="flex items-start gap-2">
