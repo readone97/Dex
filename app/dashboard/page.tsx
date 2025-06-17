@@ -935,6 +935,99 @@ const handleRemoveBankAccount = async () => {
     }
   };
 
+  // Calculate total portfolio value in USDT
+  const calculateTotalPortfolioValueInUSDT = (): number => {
+    let totalValue = 0;
+
+    // Add SOL value (convert SOL to USDT)
+    const solBalanceValue = solBalance || 0;
+    if (solBalanceValue > 0 && exchangeRates.sol_ngn > 0 && exchangeRates.usdt_ngn > 0) {
+      // Convert SOL -> NGN -> USDT
+      const solToNgn = solBalanceValue * exchangeRates.sol_ngn;
+      const solToUsdt = solToNgn / exchangeRates.usdt_ngn;
+      totalValue += solToUsdt;
+    }
+
+    // Add USDT value (already in USDT)
+    const usdtBalance = getRealTokenBalance('USDT');
+    totalValue += usdtBalance;
+
+    // Add USDC value (convert USDC to USDT - approximately 1:1)
+    const usdcBalance = getRealTokenBalance('USDC');
+    if (usdcBalance > 0 && exchangeRates.usdc_ngn > 0 && exchangeRates.usdt_ngn > 0) {
+      // Convert USDC -> NGN -> USDT
+      const usdcToNgn = usdcBalance * exchangeRates.usdc_ngn;
+      const usdcToUsdt = usdcToNgn / exchangeRates.usdt_ngn;
+      totalValue += usdcToUsdt;
+    }
+
+    return totalValue;
+  };
+
+  // Calculate portfolio balance change (mock data for now)
+  const getPortfolioBalanceChange = (): string => {
+    // This could be calculated by comparing current portfolio value with previous value
+    // For now, using a mock positive change
+    return "+2.4%";
+  };
+
+  // Get all tokens including SOL and SPL tokens for portfolio display
+  const getAllTokensForPortfolio = () => {
+    const allTokens = [];
+
+    // Add SOL as the first token with proper logo from token list or fallback
+    if (solBalance !== null) {
+      // Try to get SOL metadata from tokenMap, fallback to local
+      const solMeta = tokenMap['So11111111111111111111111111111111111111112'];
+      allTokens.push({
+        tokenAccount: 'native',
+        mint: 'So11111111111111111111111111111111111111112',
+        amount: solBalance,
+        decimals: 9,
+        symbol: 'SOL',
+        name: 'Solana', 
+        logoURI: solMeta?.logoURI || 
+          'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png'
+      });
+    }
+
+    // Add SPL tokens with metadata from official token list
+    splTokens.forEach(token => {
+      // Get metadata from tokenMap (official Solana token list)
+      const meta = tokenMap[token.mint];
+      
+      let symbol = 'UNKNOWN';
+      let name = 'Unknown Token';
+      let logoURI = null;
+
+      if (meta) {
+        symbol = meta.symbol || 'UNKNOWN';
+        name = meta.name || 'Unknown Token';
+        logoURI = meta.logoURI || null;
+      } else {
+        // Fallback for well-known tokens if not in tokenMap
+        if (token.mint === TOKEN_MINTS.USDT) {
+          symbol = 'USDT';
+          name = 'Tether USD';
+          logoURI = 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB/logo.svg';
+        } else if (token.mint === TOKEN_MINTS.USDC) {
+          symbol = 'USDC';
+          name = 'USD Coin';
+          logoURI = 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v/logo.png';
+        }
+      }
+
+      allTokens.push({
+        ...token,
+        symbol,
+        name,
+        logoURI
+      });
+    });
+
+    return allTokens;
+  };
+
   const fetchRealTimeRates = () => {
     // Simulate API call to get real-time rates
     toast({
@@ -1020,7 +1113,7 @@ const handleRemoveBankAccount = async () => {
       <main className="flex-1 py-8">
         <div className="container">
           {/* Navigation */}
-          <div className="mb-8">
+          {/* <div className="mb-8">
             <nav className="flex items-center space-x-4 lg:space-x-6">
               {navItems.map((item) => (
                 <Button
@@ -1038,7 +1131,7 @@ const handleRemoveBankAccount = async () => {
                 </Button>
               ))}
             </nav>
-          </div>
+          </div> */}
           <div className="mb-8 space-y-4 md:space-y-0 md:flex md:items-center md:justify-between">
             <h1 className="text-3xl font-bold">Dashboard</h1>
             <div className="flex flex-col sm:flex-row gap-3">
@@ -1060,25 +1153,26 @@ const handleRemoveBankAccount = async () => {
           </div>
 
           <div className="grid gap-6 md:grid-cols-3">
-            {/* Total Balance Card */}
+            {/* Total Portfolio Balance Card */}
             <Card>
               <CardHeader className="pb-2">
-                <CardTitle> Balance</CardTitle>
+                <CardTitle>Portfolio Balance</CardTitle>
                 <CardDescription>
-                  Your Solana balance in your wallet
+                  Your total portfolio value in USDT
                 </CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="flex items-center gap-2">
                   <div className="text-3xl font-bold">
-                    {" "}
-                    {solBalance === null ? (
+                    {solBalance === null || isFetchingSplTokens ? (
                       <Loader2 className="inline w-4 h-4 animate-spin" />
                     ) : (
                       <span>
-                        {solBalance.toLocaleString(undefined, {
-                          maximumFractionDigits: 6,
+                        {calculateTotalPortfolioValueInUSDT().toLocaleString(undefined, {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
                         })}{" "}
+                        <span className="text-lg text-muted-foreground">USDT</span>
                       </span>
                     )}
                   </div>
@@ -1086,12 +1180,12 @@ const handleRemoveBankAccount = async () => {
 
                   <div
                     className={`flex items-center text-sm ${
-                      balanceChange.startsWith("+")
+                      getPortfolioBalanceChange().startsWith("+")
                         ? "text-green-600 dark:text-green-400"
                         : "text-red-600 dark:text-red-400"
                     }`}
                   >
-                    {balanceChange} (24h)
+                    {getPortfolioBalanceChange()} (24h)
                   </div>
                 </div>
                 <div className="mt-2 flex items-center gap-2">
@@ -1100,10 +1194,40 @@ const handleRemoveBankAccount = async () => {
                     size="sm"
                     onClick={() => {
                       toast({
-                        title: "Refreshing Balance",
+                        title: "Refreshing Portfolio",
                         description:
-                          "Getting the latest balance information...",
+                          "Getting the latest portfolio balance...",
                       });
+                      // Force refresh balances and exchange rates
+                      if (connected && publicKey) {
+                        // Refresh SOL balance
+                        const connection = new Connection(RPC_ENDPOINT, "confirmed");
+                        connection.getBalance(publicKey).then(balance => {
+                          setSolBalance(balance / LAMPORTS_PER_SOL);
+                        }).catch(console.error);
+                        
+                        // Refresh SPL tokens
+                        setIsFetchingSplTokens(true);
+                        connection.getParsedTokenAccountsByOwner(
+                          publicKey,
+                          { programId: TOKEN_PROGRAM_ID }
+                        ).then(tokenAccounts => {
+                          const tokens = tokenAccounts.value
+                            .map(({ pubkey, account }) => {
+                              const parsed = account.data.parsed.info;
+                              return {
+                                tokenAccount: pubkey.toBase58(),
+                                mint: parsed.mint,
+                                amount: parsed.tokenAmount.uiAmount || 0,
+                                decimals: parsed.tokenAmount.decimals,
+                              };
+                            })
+                            .filter((t) => t.amount > 0);
+                          setSplTokens(tokens);
+                        }).catch(console.error).finally(() => {
+                          setIsFetchingSplTokens(false);
+                        });
+                      }
                     }}
                   >
                     <RefreshCw className="mr-2 h-3 w-3" />
@@ -1186,102 +1310,7 @@ const handleRemoveBankAccount = async () => {
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                {/* {bankAccount ? (
-                  <>
-                    <div className="rounded-md border p-3">
-                      <div className="font-medium">{bankAccount.bankName}</div>
-                      <div className="text-sm text-muted-foreground">
-                        {bankAccount.accountName}
-                      </div>
-                      <div className="text-sm text-muted-foreground">
-                        {bankAccount.accountNumber.replace(
-                          /(\d{6})(\d{4})/,
-                          "$1******"
-                        )}
-                      </div>
-                    </div>
-                    <div className="mt-4 flex gap-2">
-                      <Dialog>
-                        <DialogTrigger asChild>
-                          <Button variant="outline" size="sm">
-                            Add New Account
-                          </Button>
-                        </DialogTrigger>
-                        <DialogContent>
-                          <DialogHeader>
-                            <DialogTitle>Change Bank Account</DialogTitle>
-                            <DialogDescription>
-                              Update your bank account details
-                            </DialogDescription>
-                          </DialogHeader>
-                          <BankAccountForm
-                            onSuccess={(data) => {
-                              setBankAccount(data);
-                              toast({
-                                title: "Bank Account Updated",
-                                description:
-                                  "Your bank account has been successfully updated.",
-                                variant: "default",
-                              });
-                            }}
-                          />
-                                
-                        </DialogContent>
-                      </Dialog>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => {
-                          setBankAccount({
-                            bankName: "",
-                            accountNumber: "",
-                            accountName: "",
-                          });
-                          toast({
-                            title: "Bank Account Removed",
-                            description: "Your bank account has been removed.",
-                            variant: "default",
-                          });
-                        }}
-                      >
-                        Remove
-                      </Button>
-                    </div>
-                  </>
-                ) : (
-                  <div className="flex flex-col items-center gap-4 py-4">
-                    <div className="text-center text-muted-foreground">
-                      No bank account linked
-                    </div>
-                    <Dialog>
-                      <DialogTrigger asChild>
-                        <Button>
-                          <CreditCard className="mr-2 h-4 w-4" />
-                          Add Bank Account
-                        </Button>
-                      </DialogTrigger>
-                      <DialogContent>
-                        <DialogHeader>
-                          <DialogTitle>Add Bank Details</DialogTitle>
-                          <DialogDescription>
-                            Add your bank details to convert crypto to fiat.
-                          </DialogDescription>
-                        </DialogHeader>
-                        <BankAccountForm
-                          onSuccess={(data) => {
-                            setBankAccount(data);
-                            toast({
-                              title: "Bank Account Added",
-                              description:
-                                "Your bank account has been successfully added.",
-                              variant: "default",
-                            });
-                          }}
-                        />
-                      </DialogContent>
-                    </Dialog>
-                  </div>
-                )} */}
+              
                 {bankAccount && bankAccount.accountNumber ? (
                   <>
                     <div className="rounded-md border p-3">
@@ -1480,25 +1509,24 @@ const handleRemoveBankAccount = async () => {
           {/* Spl token Cards */}
           <Card className="mb-6">
             <CardHeader>
-              <CardTitle className="text-lg">SPL Tokens</CardTitle>
+              <CardTitle className="text-lg">Portfolio</CardTitle>
               <CardDescription>
-                All SPL tokens in your connected wallet
+                All tokens in your connected wallet 
               </CardDescription>
             </CardHeader>
             <CardContent>
-              {isFetchingSplTokens ? (
+              {isFetchingSplTokens || solBalance === null ? (
                 <div className="flex items-center gap-2">
                   <Loader2 className="w-4 h-4 animate-spin" />
                   <span>Fetching tokens...</span>
                 </div>
-              ) : splTokens.length === 0 ? (
+              ) : getAllTokensForPortfolio().length === 0 ? (
                 <div className="text-muted-foreground">
-                  No SPL tokens found.
+                  No tokens found.
                 </div>
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
-                  {splTokens.map((token) => {
-                    const meta = tokenMap[token.mint];
+                  {getAllTokensForPortfolio().map((token) => {
                     return (
                       <div
                         key={token.tokenAccount}
@@ -1516,23 +1544,23 @@ const handleRemoveBankAccount = async () => {
                       >
                         <div className="flex justify-between items-start">
                           <div className="flex items-center gap-2">
-                            {meta?.logoURI ? (
+                            {token.logoURI ? (
                               <img
-                                src={meta.logoURI}
-                                alt={meta.symbol}
+                                src={token.logoURI}
+                                alt={token.symbol}
                                 className="w-7 h-7 rounded-full border border-muted"
                               />
                             ) : (
                               <div className="w-7 h-7 rounded-full bg-muted flex items-center justify-center font-bold text-xs text-muted-foreground">
-                                {meta?.symbol?.[0] || token.mint.slice(0, 2)}
+                                {token.symbol?.[0] || token.mint.slice(0, 2)}
                               </div>
                             )}
                             <div className="text-left">
                               <div className="font-semibold text-base">
-                                {meta?.symbol || "Unknown"}
+                                {token.symbol}
                               </div>
                               <div className="text-xs text-muted-foreground">
-                                {meta?.name || "Token"}
+                                {token.name}
                               </div>
                             </div>
                           </div>
